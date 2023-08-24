@@ -1,3 +1,5 @@
+import { ipcRenderer, contextBridge } from "electron"
+
 function domReady(condition: DocumentReadyState[] = ['complete', 'interactive']) {
   return new Promise((resolve) => {
     if (condition.includes(document.readyState)) {
@@ -90,3 +92,34 @@ window.onmessage = (ev) => {
 }
 
 setTimeout(removeLoading, 4999)
+
+// Custom IPC Stuff
+const WINDOW_API = {
+    setKeybind: (key, message) => ipcRenderer.send("set-keybind", key, message),
+    removeKeybind: (key) => ipcRenderer.send("remove-keybind", key),
+    getMessage: (key) => ipcRenderer.invoke("get-message",  key),
+    getAudio: (message) => ipcRenderer.invoke("get-audio", message),
+    getSettings: () => ipcRenderer.invoke("get-settings"),
+    saveSettings: (settings) => ipcRenderer.send("save-settings", settings),
+}
+
+contextBridge.exposeInMainWorld("api", WINDOW_API);
+
+ipcRenderer.on('send-message', (event, rawAudio) => {
+    const ttsAudioOutElement = document.getElementById('audio');
+    const ttsAudioMonitorElement = document.getElementById('audio-monitor');
+    const audioContent = new Blob([rawAudio], {type: 'audio.ogg'});
+    const audioURL = URL.createObjectURL(audioContent);
+    
+    if (ttsAudioOutElement) {
+        ttsAudioOutElement.src = audioURL;
+        ttsAudioOutElement.load();
+        ttsAudioOutElement.play();
+    }
+
+    if (ttsAudioMonitorElement) {
+        ttsAudioMonitorElement.src = audioURL;
+        ttsAudioMonitorElement.load();
+        ttsAudioMonitorElement.play();
+    }
+})

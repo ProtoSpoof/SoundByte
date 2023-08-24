@@ -1,6 +1,33 @@
 import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { release } from 'node:os'
 import { join } from 'node:path'
+import { GlobalKeyboardListener} from 'node-global-key-listener';
+import Store from 'electron-store';
+import path from 'path';
+import * as gtts from '@google-cloud/text-to-speech';
+require('dotenv').config({
+    path: app.isPackaged
+    ? path.join(app.getPath('exe').substring(0, app.getPath('exe').lastIndexOf('\\')), './resources/keys/.env')
+    : path.resolve(process.cwd(), '.env')
+});
+
+const KEYBOARD_LISTENER = new GlobalKeyboardListener();
+const STORE = new Store();
+const TTS_CLIENT = new gtts.TextToSpeechClient();
+const TTS_DIRECTORY = path.join(app.getPath('userData'), './temp/')
+
+const synthesizeSpeech = async (message) => {
+    const request = {
+        input: {text: message},
+        // Select the language and SSML voice gender (optional)
+        voice: {languageCode: 'en-US', ssmlGender: 'FEMALE', name: 'en-US-Neural2-F'},
+        audioConfig: {audioEncoding: 'OGG_OPUS', pitch: 0.80, speakingRate: 1.19},
+        
+    }
+    const filename = TTS_DIRECTORY + new Date().getMilliseconds() + '.ogg';
+    const [response] = await TTS_CLIENT.synthesizeSpeech(request);
+    return(response.audioContent);
+}
 
 // The built directory structure
 //
@@ -43,22 +70,30 @@ const indexHtml = join(process.env.DIST, 'index.html')
 async function createWindow() {
   win = new BrowserWindow({
     title: 'Main window',
-    icon: join(process.env.VITE_PUBLIC, 'favicon.ico'),
+    icon: join(process.env.VITE_PUBLIC, 'logo.ico'),
     webPreferences: {
       preload,
       // Warning: Enable nodeIntegration and disable contextIsolation is not secure in production
       // Consider using contextBridge.exposeInMainWorld
       // Read more on https://www.electronjs.org/docs/latest/tutorial/context-isolation
       nodeIntegration: true,
-      contextIsolation: false,
+      contextIsolation: true,
+      webSecurity: false,
     },
+    width: 1072,
+    height: 607,
+    resizable: false,
+    fullscreenable: false,
   })
+
+  win.setMenuBarVisibility(false);
 
   if (process.env.VITE_DEV_SERVER_URL) { // electron-vite-vue#298
     win.loadURL(url)
     // Open devTool if the app is not packaged
     win.webContents.openDevTools()
   } else {
+    // win.webContents.openDevTools()
     win.loadFile(indexHtml)
   }
 
@@ -105,7 +140,7 @@ ipcMain.handle('open-win', (_, arg) => {
     webPreferences: {
       preload,
       nodeIntegration: true,
-      contextIsolation: false,
+      contextIsolation: true,
     },
   })
 
@@ -115,3 +150,40 @@ ipcMain.handle('open-win', (_, arg) => {
     childWindow.loadFile(indexHtml, { hash: arg })
   }
 })
+
+KEYBOARD_LISTENER.addListener((e, down) => {
+    if (down[e.name] || !STORE.has(`keybind.${e.rawKey.name}`)) return;
+    synthesizeSpeech(STORE.get(`keybind.${e.rawKey.name}`)).then((url) => {
+        win.webContents.send('send-message', url);
+    });
+});
+
+// IPC Handlers
+ipcMain.on("set-keybind", (event, key, message) => {
+    let value = {};
+    value[key] = message;
+    STORE.set('keybind', value);
+});
+
+ipcMain.on("remove-keybind", (event, key) => {
+    STORE.delete(`keybind.${key}`);
+});
+
+ipcMain.on("save-settings", (event, settings) => {
+
+    STORE.set('settings', settings);
+
+});
+
+ipcMain.handle("get-settings", (event) => {
+    return STORE.get('settings');
+});
+
+ipcMain.handle("get-message", (event, key) => {
+    return STORE.get(`keybind.${key}`) || "";
+});
+
+
+ipcMain.handle("get-audio", async (event, message) => {  
+    return synthesizeSpeech(message);
+});
